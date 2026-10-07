@@ -290,12 +290,6 @@ try{
     for (var i=0; i<inputs.length; i++){
       if (!inputs[i].reportValidity()) return;
     }
-    // LEAD CAPTURE POINT (consent already given here) — see compliance notes
-    // in the master brief: this record IS callable/textable per TCPA/FTSA the
-    // moment Continue is clicked, tagged "Profile: Partial" and routed to the
-    // cold Partial/Retarget List rather than the hot New Lead queue. If
-    // Step 2 is finished below, it's upgraded to a Full lead.
-    console.log('[demo] Partial lead captured — tagged "Profile: Partial," routed to the cold Partial/Retarget List. Callable now per consent.');
     step1.hidden = true;
     document.getElementById('step2').hidden = false;
     document.getElementById('stepLabel').textContent = 'Step 2 of 2 — almost done';
@@ -304,11 +298,21 @@ try{
 
   document.getElementById('quoteForm').addEventListener('submit', function(e){
     e.preventDefault();
-    // In production this PATCHes the same GrowBond record: tag upgrades from
-    // "Profile: Partial" to "Profile: Complete," pulls them off the cold
-    // Partial/Retarget List, and drops them into "New Lead" — the hot,
-    // 5-minute-SLA agent-call queue.
-    console.log('[demo] Full lead — tag upgraded to "Profile: Complete," moved off the cold list into the New Lead call queue.');
+    var motivationEl = document.getElementById('motivation');
+    var budgetEl = document.getElementById('budget');
+    var payload = {
+      firstName: document.getElementById('fname').value,
+      lastName: document.getElementById('lname').value,
+      phone: document.getElementById('phone').value,
+      email: document.getElementById('email').value,
+      source: 'Landing - Meta Wealth',
+      notes: 'Motivation: ' + (motivationEl ? motivationEl.value : '') + '. Budget: ' + (budgetEl ? budgetEl.value : '') + '.'
+    };
+    fetch('/api/submit-lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(function(err){ console.error('Lead submit failed', err); });
     document.getElementById('quote-form').classList.add('hide');
     document.getElementById('thanksCard').classList.add('show');
   });
