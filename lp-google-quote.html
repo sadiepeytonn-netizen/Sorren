@@ -276,15 +276,6 @@ try{
     for (var i=0; i<inputs.length; i++){
       if (!inputs[i].reportValidity()) return;
     }
-    // LEAD CAPTURE POINT (consent already given here):
-    // In production, this fires a POST to the GrowBond lead webhook with
-    // name/phone/email + attribution fields + consent timestamp/text version,
-    // tagged "Profile: Partial." Because consent lives in Step 1, this record
-    // IS callable/textable per TCPA/FTSA immediately — but it's routed to the
-    // Partial / Retarget List (a colder list), not the hot New Lead queue,
-    // until Step 2 is completed. If Step 2 is finished below, this same
-    // record is upgraded to a Full lead and moved into the live call queue.
-    console.log('[demo] Partial lead captured — tagged "Profile: Partial," routed to the cold Partial/Retarget List. Callable now per consent.');
     step1.hidden = true;
     document.getElementById('step2').hidden = false;
     document.getElementById('stepLabel').textContent = 'Step 2 of 2 — almost done';
@@ -293,11 +284,21 @@ try{
 
   document.getElementById('quoteForm').addEventListener('submit', function(e){
     e.preventDefault();
-    // In production this PATCHes the same GrowBond record: tag upgrades from
-    // "Profile: Partial" to "Profile: Complete," pulls them off the cold
-    // Partial/Retarget List, and drops them into "New Lead" — the hot,
-    // 5-minute-SLA agent-call queue.
-    console.log('[demo] Full lead — tag upgraded to "Profile: Complete," moved off the cold list into the New Lead call queue.');
+    var motivationEl = document.getElementById('motivation');
+    var budgetEl = document.getElementById('budget');
+    var payload = {
+      firstName: document.getElementById('fname').value,
+      lastName: document.getElementById('lname').value,
+      phone: document.getElementById('phone').value,
+      email: document.getElementById('email').value,
+      source: 'Landing - Google Quote',
+      notes: 'Motivation: ' + (motivationEl ? motivationEl.value : '') + '. Budget: ' + (budgetEl ? budgetEl.value : '') + '.'
+    };
+    fetch('/api/submit-lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(function(err){ console.error('Lead submit failed', err); });
     document.getElementById('quote-form').classList.add('hide');
     document.getElementById('thanksCard').classList.add('show');
   });
