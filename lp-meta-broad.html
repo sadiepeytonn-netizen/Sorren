@@ -159,6 +159,7 @@
       <div class="step-dots"><span class="done" id="dot1"></span><span id="dot2"></span></div>
 
       <form id="quoteForm">
+        <div style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true"><label for="hp_website">Website</label><input type="text" id="hp_website" name="website" tabindex="-1" autocomplete="off"></div>
         <div id="step1">
           <div class="field-row">
             <div><label for="fname">First name</label><input id="fname" required></div>
@@ -281,16 +282,23 @@ try{
       source: 'Landing - Meta Broad',
       notes: 'Motivation: ' + (motivationEl ? motivationEl.value : '') + '. Budget: ' + (budgetEl ? budgetEl.value : '') + '.'
     };
+    var consentEl = document.querySelector('.consent span');
+    payload.website = (document.getElementById('hp_website') || {}).value || '';
+    payload.tracking = (window.sorrenTrack && window.sorrenTrack.getData()) || {};
+    payload.consentText = consentEl ? consentEl.textContent.trim() : '';
+    payload.consentGiven = true;
+    payload.pageUrl = window.location.href;
     fetch('/api/submit-lead', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
-    }).catch(function(err){ console.error('Lead submit failed', err); });
+    }).then(function(r){ if (r && r.ok && window.sorrenTrack) { window.sorrenTrack.lead(); } }).catch(function(err){ console.error('Lead submit failed', err); });
     document.getElementById('quote-form').classList.add('hide');
     document.getElementById('thanksCard').classList.add('show');
   });
 }catch(err){}
 </script>
 
+<script src="tracking.js" defer></script>
 </body>
 </html>
