@@ -14,7 +14,7 @@
  */
 (function () {
   var CONFIG = {
-    META_PIXEL_ID: '',            // e.g. '123456789012345'
+    META_PIXEL_ID: '1119977227057061',            // e.g. '123456789012345'
     GOOGLE_TAG_ID: '',            // e.g. 'AW-123456789' (Google Ads) or 'G-XXXXXXX'
     GOOGLE_ADS_LEAD_SEND_TO: ''   // e.g. 'AW-123456789/AbCdEfGhIjKl' (conversion label)
   };
