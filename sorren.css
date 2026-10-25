@@ -158,3 +158,5 @@ a{color:#0E6B66}a:hover{color:#0A4F4B}
 .prose th{background:#EEF4F2;font-weight:600;color:#0F2A2E}
 .prose a{color:#0E6B66}
 @media (max-width:860px){.legal{grid-template-columns:1fr;gap:28px}.toc{position:static}}
+
+.brand{display:inline-flex;align-items:center;gap:10px}.brandlogo{height:40px;width:auto;display:block}@media(max-width:520px){.brand{font-size:20px;gap:8px}.brandlogo{height:34px}}
