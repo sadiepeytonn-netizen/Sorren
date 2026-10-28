@@ -114,6 +114,8 @@ module.exports = async (req, res) => {
       text = await growbondRes.text();
     }
 
+    console.log('GROWBOND_RESPONSE', growbondRes.status, String(text).slice(0, 300), JSON.stringify({ tags }));
+
     if (!growbondRes.ok) {
       console.error('Growbond rejected the lead:', growbondRes.status, text);
       res.status(502).json({ error: 'Lead service rejected the request' });
