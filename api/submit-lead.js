@@ -1,6 +1,9 @@
 // Vercel serverless function: forwards website quote-form leads to Growbond.
-// The endpoint and secret are read from Vercel environment variables
-// (GROWBOND_ENDPOINT, GROWBOND_SECRET). Never put them in this file.
+// Every lead is sent to EVERY configured destination:
+//   1. the main account: GROWBOND_ENDPOINT + GROWBOND_SECRET (optional if agents are set)
+//   2. each agent: one JSON list in the AGENT_ROUTES environment variable, e.g.
+//      [{"name":"Cedric","endpoint":"https://...","secret":"..."}, ...]
+// All of these are read from Vercel environment variables. Never put them in this file.
 
 const clip = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 
@@ -37,11 +40,29 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const endpoint = process.env.GROWBOND_ENDPOINT;
-  const secret = process.env.GROWBOND_SECRET;
+  // Build the list of places to send this lead.
+  const targets = [];
+  const isHttps = (u) => /^https:\/\//i.test(String(u || ''));
+  if (process.env.GROWBOND_ENDPOINT && process.env.GROWBOND_SECRET) {
+    targets.push({ name: 'main', endpoint: process.env.GROWBOND_ENDPOINT, secret: process.env.GROWBOND_SECRET });
+  }
+  if (process.env.AGENT_ROUTES) {
+    try {
+      const list = JSON.parse(process.env.AGENT_ROUTES);
+      (Array.isArray(list) ? list : []).forEach((a, i) => {
+        if (a && isHttps(a.endpoint) && a.secret) {
+          targets.push({ name: clip(a.name || ('agent' + (i + 1)), 40), endpoint: a.endpoint, secret: a.secret });
+        } else {
+          console.error('AGENT_ROUTES entry skipped (needs https endpoint and secret):', clip(a && a.name, 40) || i);
+        }
+      });
+    } catch (e) {
+      console.error('AGENT_ROUTES is not valid JSON');
+    }
+  }
 
-  if (!endpoint || !secret) {
-    console.error('Growbond env vars are not configured');
+  if (!targets.length) {
+    console.error('No lead destinations are configured');
     res.status(500).json({ error: 'Lead capture is not configured yet' });
     return;
   }
@@ -95,38 +116,50 @@ module.exports = async (req, res) => {
     notes: notes,
   };
 
-  const post = (data) => fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-integration-secret': secret,
-    },
-    body: JSON.stringify(data),
-  });
-
-  try {
-    let growbondRes = await post({ ...payload, tags });
-    let text = await growbondRes.text();
-
-    if (!growbondRes.ok && growbondRes.status >= 400 && growbondRes.status < 500) {
-      console.error('Growbond rejected lead with tags, retrying without:', growbondRes.status, text);
-      growbondRes = await post(payload);
-      text = await growbondRes.text();
+  // Send to one destination. Tries with tags; if that destination rejects them (4xx),
+  // retries once without tags so a lead is never lost. Each attempt has a time limit.
+  const sendTo = async (target) => {
+    const post = async (data) => {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      try {
+        return await fetch(target.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-integration-secret': target.secret },
+          body: JSON.stringify(data),
+          signal: ctl.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    try {
+      let r = await post({ ...payload, tags });
+      let text = await r.text();
+      if (!r.ok && r.status >= 400 && r.status < 500) {
+        r = await post(payload);
+        text = await r.text();
+      }
+      return { name: target.name, ok: r.ok, status: r.status, body: r.ok ? '' : String(text).slice(0, 200) };
+    } catch (err) {
+      return { name: target.name, ok: false, status: 0, body: String(err && err.message || err).slice(0, 200) };
     }
+  };
 
-    console.log('GROWBOND_RESPONSE', growbondRes.status, String(text).slice(0, 300), JSON.stringify({ tags }));
+  // Everyone gets every lead: send to all destinations at the same time.
+  const results = await Promise.all(targets.map(sendTo));
+  const okCount = results.filter((r) => r.ok).length;
 
-    if (!growbondRes.ok) {
-      console.error('Growbond rejected the lead:', growbondRes.status, text);
-      res.status(502).json({ error: 'Lead service rejected the request' });
-      return;
-    }
+  // Log which destinations accepted or rejected (no keys or lead details here).
+  console.log('LEAD_DELIVERY', JSON.stringify({ sent: okCount, total: results.length, failed: results.filter((r) => !r.ok) }));
 
-    // Backup copy of the consent/attribution record in the Vercel logs.
-    console.log('LEAD_RECORD', JSON.stringify({ firstName, phone, email, source, tags, notes }));
-    res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error('Growbond request failed:', err);
-    res.status(502).json({ error: 'Lead service unreachable' });
+  if (!okCount) {
+    console.error('Every destination rejected the lead');
+    res.status(502).json({ error: 'Lead service rejected the request' });
+    return;
   }
+
+  // Backup copy of the consent/attribution record in the Vercel logs.
+  console.log('LEAD_RECORD', JSON.stringify({ firstName, phone, email, source, tags, notes }));
+  res.status(200).json({ ok: true });
 };
