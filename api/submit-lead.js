@@ -1,8 +1,8 @@
 // Vercel serverless function: forwards website quote-form leads to Growbond.
 // Every lead is sent to EVERY configured destination:
 //   1. the main account: GROWBOND_ENDPOINT + GROWBOND_SECRET (optional if agents are set)
-//   2. each agent: one JSON list in the AGENT_ROUTES environment variable, e.g.
-//      [{"name":"Cedric","endpoint":"https://...","secret":"..."}, ...]
+//   2. each agent: one variable named AGENT_<NAME>, value {"endpoint":"https://...","secret":"..."}
+//      (a single AGENT_ROUTES list of {name,endpoint,secret} objects also works)
 // All of these are read from Vercel environment variables. Never put them in this file.
 
 const clip = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
@@ -60,6 +60,23 @@ module.exports = async (req, res) => {
       console.error('AGENT_ROUTES is not valid JSON');
     }
   }
+
+  // One variable per agent: AGENT_<NAME> = {"endpoint":"https://...","secret":"..."}
+  // Add a new agent by adding a new variable. (AGENT_ROUTES, above, still works too.)
+  Object.keys(process.env)
+    .filter((k) => /^AGENT_[A-Z0-9_]+$/i.test(k) && k.toUpperCase() !== 'AGENT_ROUTES')
+    .forEach((k) => {
+      try {
+        const a = JSON.parse(process.env[k]);
+        if (a && isHttps(a.endpoint) && a.secret) {
+          targets.push({ name: clip(k.slice(6), 40), endpoint: a.endpoint, secret: a.secret });
+        } else {
+          console.error(k + ' skipped (needs https endpoint and secret)');
+        }
+      } catch (e) {
+        console.error(k + ' is not valid JSON');
+      }
+    });
 
   if (!targets.length) {
     console.error('No lead destinations are configured');
