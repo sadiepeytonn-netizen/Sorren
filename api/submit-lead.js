@@ -4,6 +4,8 @@
 //   2. each agent: one variable named AGENT_<NAME>, value {"endpoint":"https://...","secret":"..."}
 //      (a single AGENT_ROUTES list of {name,endpoint,secret} objects also works)
 // All of these are read from Vercel environment variables. Never put them in this file.
+// Lead quality: obvious fake names, phone numbers and emails are rejected with HTTP 422
+// (so nothing reaches an agent and the page does not fire the Meta "Lead" event).
 
 const clip = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 
@@ -18,7 +20,7 @@ module.exports = async (req, res) => {
   // Honeypot: real visitors never see or fill this field. Bots do.
   // Pretend success so the bot moves on, but do not create a lead.
   if (clip(body.website, 200)) {
-    res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true, skipped: true });
     return;
   }
 
@@ -39,6 +41,102 @@ module.exports = async (req, res) => {
     res.status(400).json({ error: 'Invalid phone number' });
     return;
   }
+
+  // ---- Lead quality checks (free, no outside service) ----
+  const age = clip(body.age, 20);
+  const state = clip(body.state, 40);
+  const covering = clip(body.covering, 80);
+  const flags = [];
+  const reject = (field, message) => {
+    console.log('LEAD_REJECTED', JSON.stringify({ field }));
+    res.status(422).json({ error: 'invalid', field, message });
+  };
+
+  const normName = (s) => s.toLowerCase().replace(/[^a-z' -]/g, '').replace(/\s+/g, ' ').trim();
+  const FAKE_NAMES = new Set([
+    'john doe', 'jane doe', 'jon doe', 'mickey mouse', 'minnie mouse', 'donald duck', 'daffy duck', 'bugs bunny',
+    'test test', 'first last', 'firstname lastname', 'your name', 'my name', 'no name', 'fake name', 'fake person',
+    'name name', 'john q public', 'joe schmoe', 'joe blow', 'santa claus', 'spider man', 'harry potter',
+    'darth vader', 'elon musk', 'donald trump', 'joe biden', 'barack obama',
+  ]);
+  const FAKE_WORD = /^(test|tester|testing|xxx+|aaa+|abc+|fake|none|null|na|n\/a|unknown|anonymous|nobody|noname|spam|scam|lol|idk|asdf\w*|qwer\w*|zxcv\w*|hjkl\w*|sdfg\w*|dfgh\w*)$/;
+  const badNamePart = (p) => {
+    const lower = normName(p);
+    const w = lower.replace(/[ '-]/g, '');
+    if (!w) return false;
+    if (/appleseed/.test(w)) return true;                   // Johnny Appleseed
+    if (/(.)\1{3,}/.test(w)) return true;                   // aaaa
+    if (w.length >= 4 && !/[aeiouy]/.test(w)) return true;  // keyboard mash with no vowels
+    return FAKE_WORD.test(w) || FAKE_WORD.test(lower);
+  };
+  if (/[0-9@]/.test(firstName + lastName)) {
+    return reject('name', 'Please enter your real first and last name.');
+  }
+  if (firstName.replace(/[^A-Za-z]/g, '').length < 2) {
+    return reject('name', 'Please enter your full first name.');
+  }
+  if (FAKE_NAMES.has(normName(firstName + ' ' + lastName)) || badNamePart(firstName) || (lastName && badNamePart(lastName))) {
+    return reject('name', 'Please enter your real first and last name so an agent can reach the right person.');
+  }
+
+  // Phone: must have the shape of a real U.S. number.
+  let ten = digits;
+  if (digits.length === 11) {
+    if (digits[0] !== '1') return reject('phone', 'Please enter a valid U.S. phone number.');
+    ten = digits.slice(1);
+  }
+  const area = ten.slice(0, 3);
+  const exch = ten.slice(3, 6);
+  const line = ten.slice(6);
+  let steps = 0;
+  for (let i = 1; i < ten.length; i++) {
+    const d = (Number(ten[i]) - Number(ten[i - 1]) + 10) % 10;
+    if (d === 1 || d === 9) steps++;
+  }
+  const badPhone =
+    !/^[2-9]/.test(area) ||                                // area code cannot start with 0 or 1
+    /^[2-9]11$/.test(area) ||                              // 211, 311 ... 911
+    area === '555' ||
+    ['800', '833', '844', '855', '866', '877', '888'].includes(area) ||
+    !/^[2-9]/.test(exch) ||                                // exchange cannot start with 0 or 1
+    /^[2-9]11$/.test(exch) ||
+    (exch === '555' && (/^01\d\d$/.test(line) || line === '1212')) ||  // fictional / directory numbers
+    new Set(ten.split('')).size <= 2 ||                    // 5555555555, 1212121212
+    steps >= 8;                                            // 1234567890, 9876543210
+  if (badPhone) {
+    return reject('phone', 'That phone number does not look valid. Please enter the best number to reach you.');
+  }
+
+  // Email (when given): real-looking address, not a placeholder, not a throwaway inbox.
+  if (email) {
+    const m = email.toLowerCase().match(/^([^@\s]+)@([^@\s]+\.[a-z]{2,})$/);
+    if (!m) return reject('email', 'Please enter a valid email address.');
+    const local = m[1];
+    const dom = m[2];
+    const PLACEHOLDER_DOMAINS = ['example.com', 'example.org', 'example.net', 'test.com', 'test.org', 'domain.com',
+      'email.com', 'none.com', 'noemail.com', 'nomail.com', 'no.com', 'fake.com', 'asdf.com', 'abc.com', 'a.com', 'xyz.com'];
+    const PLACEHOLDER_LOCALS = /^(test|testing|asdf|asdfg|qwerty|noemail|none|no|nope|fake|abc|abcd|abc123|123|1234|name|email|spam|null|na|a|aa|aaa|xx|xxx)$/;
+    if (PLACEHOLDER_DOMAINS.includes(dom) || PLACEHOLDER_LOCALS.test(local) || /appleseed/.test(local)) {
+      return reject('email', 'Please enter your real email address.');
+    }
+    const DISPOSABLE = ['mailinator.com', 'guerrillamail.com', 'guerrillamailblock.com', 'sharklasers.com', 'grr.la',
+      '10minutemail.com', 'tempmail.com', 'temp-mail.org', 'tempr.email', 'yopmail.com', 'trashmail.com',
+      'throwawaymail.com', 'getnada.com', 'dispostable.com', 'maildrop.cc', 'mailnesia.com', 'mintemail.com',
+      'moakt.com', 'emailondeck.com', 'fakeinbox.com', 'spamgourmet.com', 'tmpmail.org', 'burnermail.io',
+      'mohmal.com', 'inboxkitten.com', 'harakirimail.com', '33mail.com', 'mailcatch.com', 'tempinbox.com',
+      'emailfake.com', 'mail7.io', 'dropmail.me', 'tempail.com', 'anonbox.net', 'crazymailing.com'];
+    if (DISPOSABLE.includes(dom)) {
+      return reject('email', 'Please use a regular email address (not a temporary inbox).');
+    }
+  }
+
+  // Soft signal: accepted and tagged, but does not count as a Meta "Lead".
+  if (state && /^no/i.test(state)) flags.push('non-fl');
+  const qualLine = [
+    age ? 'Age: ' + age : '',
+    state ? 'Lives in Florida: ' + state : '',
+    covering ? 'Protecting: ' + covering : '',
+  ].filter(Boolean).join('. ');
 
   // Build the list of places to send this lead.
   const targets = [];
@@ -96,6 +194,8 @@ module.exports = async (req, res) => {
 
   const notes = [
     baseNotes,
+    qualLine ? 'Qualifiers: ' + qualLine + '.' : '',
+    flags.length ? 'Flags: ' + flags.join(', ') : '',
     attrib ? 'Attribution: ' + attrib : 'Attribution: none (direct or untracked)',
     'Consent: ' + (body.consentGiven ? 'YES' : 'NO') + ' at ' + new Date().toISOString() +
       ' | page=' + clip(body.pageUrl, 300) + ' | ip=' + ip + ' | ua=' + ua,
@@ -121,6 +221,7 @@ module.exports = async (req, res) => {
     t.landing_page ? 'page:' + String(t.landing_page).replace(/^\//, '').replace(/\.html$/, '') : '',
     goalLabel ? 'goal:' + goalLabel : '',
     bud ? 'budget:' + bud : '',
+    flags.includes('non-fl') ? 'state:non-fl' : '',
     body.consentGiven ? 'consent:yes' : '',
   ].filter(Boolean).map(tag).slice(0, 8);
 
@@ -178,5 +279,5 @@ module.exports = async (req, res) => {
 
   // Backup copy of the consent/attribution record in the Vercel logs.
   console.log('LEAD_RECORD', JSON.stringify({ firstName, phone, email, source, tags, notes }));
-  res.status(200).json({ ok: true });
+  res.status(200).json({ ok: true, flagged: flags.length > 0 });
 };
