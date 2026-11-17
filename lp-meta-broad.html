@@ -37,6 +37,7 @@
         <div class="bar" id="bar"><i></i></div>
         <form id="quoteForm" class="steps-form">
           <div style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true"><label for="hp_website">Website</label><input type="text" id="hp_website" name="website" tabindex="-1" autocomplete="off"></div>
+          <div id="formError" role="alert" hidden style="background:#FDECEA;color:#8A1C13;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:600"></div>
           <div id="step1" class="steps-form">
             <div class="row2">
               <div><label for="fname">First name</label><input id="fname" autocomplete="given-name" required></div>
@@ -59,6 +60,18 @@
             <div>
               <label for="budget">What's your monthly budget for coverage?</label>
               <select id="budget"><option>Under $50/month</option><option>$50 – $100/month</option><option>$100 – $200/month</option><option>$200+/month</option><option>Not sure yet</option></select>
+            </div>
+            <div>
+              <label for="age">What's your age range?</label>
+              <select id="age" required><option value="">Select…</option><option>18–29</option><option>30–39</option><option>40–49</option><option>50–59</option><option>60–69</option><option>70+</option></select>
+            </div>
+            <div>
+              <label for="state">Do you currently live in Florida?</label>
+              <select id="state" required><option value="">Select…</option><option>Yes</option><option>No, I live in another state</option></select>
+            </div>
+            <div>
+              <label for="covering">Who depends on you financially?</label>
+              <select id="covering" required><option value="">Select…</option><option>Spouse or partner</option><option>Children</option><option>Spouse and children</option><option>Parents or other family</option><option>No one right now</option></select>
             </div>
             <button type="submit" class="cta">See My Options</button>
             <div class="fine">Your information is never sold. <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a></div>
@@ -144,8 +157,28 @@ try{
     document.getElementById('bar').classList.add('two');
   });
 
+  var errBox = document.getElementById('formError');
+  function showError(msg, backToStep1){
+    errBox.textContent = msg;
+    errBox.hidden = false;
+    if (backToStep1) {
+      document.getElementById('step2').hidden = true;
+      document.getElementById('step1').hidden = false;
+      document.getElementById('stepLabel').textContent = 'Step 1 of 2';
+      document.getElementById('bar').classList.remove('two');
+    }
+    try { errBox.scrollIntoView({behavior:'smooth', block:'center'}); } catch(e){}
+  }
+  function showThanks(){
+    document.getElementById('quote-form').classList.add('hide');
+    document.getElementById('thanksCard').classList.add('show');
+  }
+
   document.getElementById('quoteForm').addEventListener('submit', function(e){
     e.preventDefault();
+    var btn = e.target.querySelector('button[type="submit"]');
+    if (btn && btn.disabled) return;
+    errBox.hidden = true;
     var motivationEl = document.getElementById('motivation');
     var budgetEl = document.getElementById('budget');
     var payload = {
@@ -154,7 +187,10 @@ try{
       phone: document.getElementById('phone').value,
       email: document.getElementById('email').value,
       source: SOURCE,
-      notes: 'Motivation: ' + (motivationEl ? motivationEl.value : '') + '. Budget: ' + (budgetEl ? budgetEl.value : '') + '.'
+      notes: 'Motivation: ' + (motivationEl ? motivationEl.value : '') + '. Budget: ' + (budgetEl ? budgetEl.value : '') + '.',
+      age: document.getElementById('age').value,
+      state: document.getElementById('state').value,
+      covering: document.getElementById('covering').value
     };
     var consentEl = document.querySelector('.consent span');
     payload.website = (document.getElementById('hp_website') || {}).value || '';
@@ -162,13 +198,32 @@ try{
     payload.consentText = consentEl ? consentEl.textContent.trim() : '';
     payload.consentGiven = true;
     payload.pageUrl = window.location.href;
+    var label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    function reset(){ if (btn) { btn.disabled = false; btn.textContent = label; } }
     fetch('/api/submit-lead', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
-    }).then(function(r){ if (r && r.ok && window.sorrenTrack) { window.sorrenTrack.lead(); } }).catch(function(err){ console.error('Lead submit failed', err); });
-    document.getElementById('quote-form').classList.add('hide');
-    document.getElementById('thanksCard').classList.add('show');
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, status: r.status, j: j }; });
+    }).then(function(res){
+      if (res.ok) {
+        // Count a Meta "Lead" only for real, qualified submissions (not bots, not out-of-state).
+        if (!res.j.skipped && !res.j.flagged && window.sorrenTrack) { window.sorrenTrack.lead(); }
+        showThanks();
+      } else if (res.status === 422) {
+        reset();
+        showError(res.j.message || 'Please check your details and try again.', true);
+      } else {
+        reset();
+        showError('Sorry, something went wrong sending your request. Please try again, or email admin@sorren.org.', false);
+      }
+    }).catch(function(err){
+      console.error('Lead submit failed', err);
+      reset();
+      showError('Sorry, something went wrong sending your request. Please check your connection and try again.', false);
+    });
   });
 }catch(err){}
 </script>
